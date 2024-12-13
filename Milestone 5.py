@@ -49,3 +49,4 @@ def get_recommendations(request: APIRecommendationRequest):
         raise HTTPException(status_code=500, detail=f"Missing column in dataset: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
