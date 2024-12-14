@@ -16,7 +16,7 @@ data.dropna(subset=['Year', 'Genres'], inplace=True)
 movie_data = data[data['Poster path'].notna()]
 
 # For 'Overview', fill missing values with a placeholder
-data['Overview'] = data['Overview'].fillna('No overview available.')
+data = data.dropna(subset=['Overview'])
 
 # Step 2: Normalize Numerical Columns
 # Normalize 'Popularity', 'Vote Average', and 'Vote Count'

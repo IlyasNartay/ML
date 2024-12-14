@@ -1,110 +1,155 @@
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import os
 
-# DTO-класс для обработки входных запросов
-class RecommendationRequest:
-    def __init__(self, gender: str, age: int, country: str, query: str):
-        self.gender = gender.lower()
+# Пути к файлам
+MOVIES_FILE = 'cleaned_tmdb_movies.csv'
+QUERIES_FILE = 'queries.csv'
+
+
+# Класс для обработки запросов
+class Request:
+    def __init__(self, gender: str, age: int, country: str, query: str, n: int = 5):
+        self.gender = gender
         self.age = age
-        self.country = country.lower()
-        self.query = query.lower()
+        self.country = country
+        self.query = query
+        self.n = n
 
-class MovieRecommendationModel:
-    def __init__(self, movie_data: pd.DataFrame):
+
+# Класс для формирования ответа
+class Response:
+    def __init__(self, recommended_movies, message="Success"):
+        self.recommended_movies = recommended_movies
+        self.message = message
+
+    def to_dict(self):
+        return {
+            "message": self.message,
+            "recommended_movies": self.recommended_movies.to_dict(orient="records") if not self.recommended_movies.empty else []
+        }
+
+
+# Класс для обработки обратной связи
+class UserFeedback:
+    def __init__(self, selected_movies):
         """
-        Initialize the recommendation model with movie data.
-
-        Parameters:
-            movie_data (pd.DataFrame): A DataFrame containing movie information with columns such as 'Movie Name', 'Genres', 'Overview', etc.
+        :param selected_movies: Список выбранных пользователем фильмов (их названия)
         """
-        self.movie_data = movie_data.copy()
-        self.movie_data['content'] = (
-            self.movie_data['Movie Name'].str.lower().fillna('') + ' ' +
-            self.movie_data['Genres'].fillna('') + ' ' +
-            self.movie_data['Overview'].str.lower().fillna('')
-        )
-        self.vectorizer = TfidfVectorizer(stop_words='english')
-        self.tfidf_matrix = self.vectorizer.fit_transform(self.movie_data['content'])
+        self.selected_movies = selected_movies
 
-    def recommend(self, request: RecommendationRequest, top_n: int = 3):
-        """
-        Recommend movies based on the user's query and preferences.
 
-        Parameters:
-            request (RecommendationRequest): A DTO containing user preferences and search query.
-            top_n (int): Number of top recommendations to return.
+# Загрузка данных о фильмах
+def load_movies(file_path):
+    try:
+        return pd.read_csv(file_path)
+    except FileNotFoundError:
+        raise Exception(f"File {file_path} not found. Please ensure the file exists.")
 
-        Returns:
-            pd.DataFrame: A DataFrame containing recommended movies with their details.
-        """
-        # Extract query keywords
-        user_query = f"{request.query} {request.gender} {request.age} {request.country}"
-        query_vector = self.vectorizer.transform([user_query])
 
-        # Compute similarity scores
-        similarity_scores = cosine_similarity(query_vector, self.tfidf_matrix).flatten()
-
-        # Filter by genres if keywords are present in query
-        genre_keywords = [
-            'adventure', 'sci-fi', 'science fiction', 'action', 'fantasy', 'drama', 'horror', 'thriller',
-            'comedy', 'romance', 'documentary', 'biography', 'mystery', 'crime', 'war', 'musical', 'animation',
-            'family', 'history', 'western', 'superhero', 'psychological', 'epic', 'space', 'alien', 'future',
-            'supernatural', 'paranormal', 'detective', 'sports', 'survival'
-        ]
-        filtered_data = self.movie_data
-
-        for keyword in genre_keywords:
-            if keyword in request.query:
-                filtered_data = filtered_data[filtered_data['Genres'].str.contains(keyword, case=False, na=False)]
-                break  # Use the first matching keyword to filter
-
-        # Recompute similarity scores for the filtered dataset
-        if not filtered_data.empty:
-            filtered_indices = filtered_data.index
-            filtered_similarity_scores = similarity_scores[filtered_indices]
-            top_indices = filtered_indices[filtered_similarity_scores.argsort()[-top_n:][::-1]]
+# Загрузка или создание файла запросов
+def load_or_create_queries(file_path):
+    if os.path.exists(file_path):
+        if os.stat(file_path).st_size == 0:
+            # Если файл существует, но пуст, создаём заголовки
+            df = pd.DataFrame(columns=["gender", "age", "country", "query", "recommended_movies"])
+            df.to_csv(file_path, index=False)
+            return df
         else:
-            top_indices = similarity_scores.argsort()[-top_n:][::-1]
+            return pd.read_csv(file_path)
+    else:
+        # Создаём новый файл с колонками
+        df = pd.DataFrame(columns=["gender", "age", "country", "query", "recommended_movies"])
+        df.to_csv(file_path, index=False)
+        return df
 
-        # Retrieve recommendations
-        recommendations = self.movie_data.iloc[top_indices].copy()
-        recommendations.loc[:, 'similarity'] = similarity_scores[top_indices]
 
-        # Sort by similarity and popularity (if available)
-        if 'Popularity' in recommendations.columns:
-            recommendations = recommendations.sort_values(by=['similarity', 'Popularity'], ascending=[False, False])
+# Обновление файла запросов
+def save_query_to_csv(file_path, request: Request, selected_movies):
+    new_query = {
+        "gender": request.gender,
+        "age": request.age,
+        "country": request.country,
+        "query": request.query,
+        "recommended_movies": ";".join(map(str, selected_movies))
+    }
+    df = load_or_create_queries(file_path)
+    new_query_df = pd.DataFrame([new_query])  # Создаём DataFrame из новой записи
+    df = pd.concat([df, new_query_df], ignore_index=True)  # Используем pd.concat для добавления
+    df.to_csv(file_path, index=False)
 
-        return recommendations[['Movie Name', 'Poster path', 'Overview']]
 
-# # Load the dataset
-# file_path = 'tmdb_movies_cleaned.csv'
-# movie_data = pd.read_csv(file_path)
-#
-# # Initialize the recommendation model
-# model = MovieRecommendationModel(movie_data)
+# Функция фильтрации фильмов по возрасту
+def filter_movies_by_age(movies, user_age):
+    if user_age < 18:
+        return movies[movies['Adult'] == False]  # Исключаем фильмы для взрослых
+    return movies
 
-# # Create recommendation requests
-# request_user1 = RecommendationRequest(
-#     gender="male",
-#     age=25,
-#     country="USA",
-#     query="An epic adventure in space with heroic battles and stunning visuals."
-# )
-#
-# request_user2 = RecommendationRequest(
-#     gender="female",
-#     age=40,
-#     country="France",
-#     query="An epic adventure in space with heroic battles and stunning visuals."
-# )
-#
-# # Get recommendations for user 1
-# recommendations_user1 = model.recommend(request_user1, top_n=3)
-# print("Recommendations for User 1:")
-# print(recommendations_user1)
-#
-# # Get recommendations for user 2
-# recommendations_user2 = model.recommend(request_user2, top_n=3)
-# print("\nRecommendations for User 2:")
-# print(recommendations_user2)
+
+def recommend_movies(request: Request, movies):
+    # Фильтруем фильмы по возрасту
+    filtered_movies = filter_movies_by_age(movies, request.age)
+
+    # Проверяем, есть ли фильмы для обработки
+    if filtered_movies.empty:
+        return Response(recommended_movies=pd.DataFrame(), message="No movies available for the given criteria")
+
+    # Обрабатываем текстовые данные
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(filtered_movies['Overview'].fillna('') + [request.query])
+
+    # Вычисляем сходство между запросом и фильмами
+    cosine_sim = cosine_similarity(tfidf_matrix[-1], tfidf_matrix[:-1])
+    similarity_scores = cosine_sim.flatten()
+
+    # Добавляем текстовое сходство в DataFrame
+    filtered_movies = filtered_movies.copy()  # Создаём копию, чтобы избежать изменений в оригинале
+    filtered_movies['similarity'] = similarity_scores
+
+    # Добавляем комбинированный балл (текстовое сходство + популярность)
+    weight_similarity = 0.7  # Вес текстового сходства
+    weight_popularity = 0.3  # Вес популярности
+    filtered_movies['combined_score'] = (
+        weight_similarity * filtered_movies['similarity'] +
+        weight_popularity * filtered_movies['Popularity']
+    )
+
+    # Сортируем фильмы по комбинированному баллу
+    recommendations = filtered_movies.sort_values(by='combined_score', ascending=False).head(request.n)
+
+    return Response(recommended_movies=recommendations)
+
+
+
+# Обновление модели на основе обратной связи
+def update_model_with_feedback(movies, feedback: UserFeedback):
+    """
+    Обновляет данные модели на основе выбора пользователя.
+    :param movies: DataFrame с фильмами.
+    :param feedback: Объект UserFeedback с выбором пользователя.
+    :return: Обновлённый DataFrame.
+    """
+    for movie_name in feedback.selected_movies:
+        # Увеличиваем популярность фильмов, выбранных пользователем
+        if movie_name in movies['Movie Name'].values:
+            movies.loc[movies['Movie Name'] == movie_name, 'Popularity'] += 1
+        else:
+            raise Exception(f"Movie '{movie_name}' not found in dataset.")
+    return movies
+
+
+# Корректировка модели на основе предыдущих запросов
+def adjust_model_with_queries(movies, queries):
+    for _, row in queries.iterrows():
+        recommended_ids = row['recommended_movies'].split(';')
+        for movie_id in recommended_ids:
+            if movie_id in movies['Movie Name'].values:
+                movies.loc[movies['Movie Name'] == movie_id, 'Popularity'] += 1
+    return movies
+
+
+# Глобальная загрузка данных
+movies = load_movies(MOVIES_FILE)
+queries = load_or_create_queries(QUERIES_FILE)
+movies = adjust_model_with_queries(movies, queries)
