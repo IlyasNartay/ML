@@ -107,6 +107,7 @@ def recommend_movies(request: Request, movies):
     filtered_movies = filtered_movies.copy()  # Создаём копию, чтобы избежать изменений в оригинале
     filtered_movies['similarity'] = similarity_scores
 
+
     # Добавляем комбинированный балл (текстовое сходство + популярность)
     weight_similarity = 0.7  # Вес текстового сходства
     weight_popularity = 0.3  # Вес популярности
