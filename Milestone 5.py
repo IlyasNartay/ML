@@ -1,84 +1,59 @@
-from fastapi import FastAPI, HTTPException
+import pandas as pd
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-import pandas as pd
-from starlette.middleware.cors import CORSMiddleware
-from Milestone4 import recommend_movies, update_model_with_feedback, movies, UserFeedback, Request  # Импортируем из Milestone4
+from Milestone4 import RecommendationModel, gender_genre_preferences
 
-# DTO-класс для API запросов
-class APIRecommendationRequest(BaseModel):
-    gender: str
-    age: int
-    country: str
-    query: str
-    n: int = 5  # Количество фильмов по умолчанию
-
-# DTO-класс для API обратной связи
-class FeedbackRequest(BaseModel):
-    selected_movies: List[str]  # Список фильмов, которые выбрал пользователь
-
-# DTO-класс для API ответов
-class MovieResponse(BaseModel):
-    movie_name: str
-    poster_path: str
-    overview: str
-    popularity: float
-
-# Инициализация FastAPI
+# Инициализация FastAPI приложения
 app = FastAPI()
 
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Укажите источник или ["*"] для разрешения всех источников
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Разрешить все методы (GET, POST, DELETE и т.д.)
-    allow_headers=["*"],  # Разрешить все заголовки
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-@app.post("/recommendations", response_model=List[MovieResponse])
-def get_recommendations(request: APIRecommendationRequest):
-    try:
-        # Преобразуем API запрос в объект Request
-        recommendation_request = Request(
-            gender=request.gender,
-            age=request.age,
-            country=request.country,
-            query=request.query,
-            n=request.n
-        )
+# Загрузка данных
+file_path = 'cleaned_tmdb_movies.csv'
+movies_df = pd.read_csv(file_path)
 
-        # Получаем рекомендации
-        response = recommend_movies(recommendation_request, movies)
+# Инициализация модели
+model = RecommendationModel(movies_df)
 
-        # Формируем ответ для клиента
-        recommendations = [
-            MovieResponse(
-                movie_name=row['Movie Name'],
-                poster_path=row.get('Poster path', ''),
-                overview=row['Overview'],
-                popularity=row['Popularity']
-            ) for _, row in response.recommended_movies.iterrows()
-        ]
-        return recommendations
-    except KeyError as e:
-        raise HTTPException(status_code=500, detail=f"Missing column in dataset: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Pydantic модель для запроса
+class RecommendRequest(BaseModel):
+    query: str
+    gender: str
+    age: int
+    n: int = 5
 
+# Pydantic модель для фидбэка
+class FeedbackRequest(BaseModel):
+    selected_movies: List[str]
 
+# Эндпоинт для рекомендаций
+@app.post("/recommendations")
+def get_recommendations(request: RecommendRequest):
+    preferences = gender_genre_preferences.get(request.gender.lower(), [])
+    recommendations = model.recommend_movies(
+        query=request.query, gender_preferences=preferences, age=request.age, n=request.n
+    )
+    return {
+        "message": "Success",
+        "recommendations": recommendations.to_dict(orient="records")
+    }
+
+# Эндпоинт для обновления фидбэка
 @app.post("/feedback")
-def send_feedback(feedback: FeedbackRequest):
-    try:
-        # Преобразуем API запрос в объект UserFeedback
-        user_feedback = UserFeedback(selected_movies=feedback.selected_movies)
+def update_user_feedback(feedback: FeedbackRequest):
+    model.update_feedback(feedback.selected_movies)
+    return {"message": "Feedback successfully updated"}
 
-        # Обновляем модель на основе выбора пользователя
-        global movies
-        movies = update_model_with_feedback(movies, user_feedback)
-
-        return {"message": "Feedback processed successfully"}
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Запуск приложения
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

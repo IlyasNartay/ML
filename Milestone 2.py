@@ -1,52 +1,48 @@
 import pandas as pd
 import numpy as np
 
-# Load the dataset
-file_path = 'tmdb_top_1000_movies.csv'
-data = pd.read_csv(file_path)
+# Загрузка данных
+movies_df = pd.read_csv('tmdb_top_1000_movies.csv')
 
-# Inspect the dataset
-print("Initial Data Info:")
-print(data.info())
 
-# Step 1: Handle Missing Values
-# Drop rows with missing 'Year' or 'Genres' (critical for recommendations)
-data.dropna(subset=['Year', 'Genres'], inplace=True)
-# Remove rows where 'Poster path' is null or NaN
-movie_data = data[data['Poster path'].notna()]
+# Milestone 2: Data Preprocessing
 
-# For 'Overview', fill missing values with a placeholder
-data = data.dropna(subset=['Overview'])
+def preprocess_data(df):
+    # 1. Удаление дубликатов
+    df = df.drop_duplicates()
+    print("Дубликаты удалены.")
 
-# Step 2: Normalize Numerical Columns
-# Normalize 'Popularity', 'Vote Average', and 'Vote Count'
-from sklearn.preprocessing import MinMaxScaler
-scaler = MinMaxScaler()
-data[['Popularity', 'Vote Average', 'Vote Count']] = scaler.fit_transform(data[['Popularity', 'Vote Average', 'Vote Count']])
+    # 2. Обработка пропущенных значений
+    # Заполняем пропущенные значения в числовых колонках медианой
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        df.loc[:, col] = df[col].fillna(df[col].median())
 
-# Step 3: Encode Categorical Features
-# One-hot encode 'Genres'
-data['Genres'] = data['Genres'].str.split(', ')
-all_genres = set(genre for genres_list in data['Genres'] for genre in genres_list)
-for genre in all_genres:
-    data[genre] = data['Genres'].apply(lambda x: 1 if genre in x else 0)
+    # Удаляем строки с пропущенными значениями в текстовых колонках
+    text_cols = df.select_dtypes(include=[object]).columns
+    df = df.dropna(subset=text_cols)
+    print("Строки с пропущенными текстовыми значениями удалены.")
 
-# Drop the original 'Genres' column
-data.drop(columns=['Genres'], inplace=True)
+    # 3. Нормализация числовых данных (Min-Max Scaling)
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler()
+    df[numeric_cols] = scaler.fit_transform(df[numeric_cols].values)
+    print("Числовые данные нормализованы.")
 
-# Encode 'Language'
-language_dummies = pd.get_dummies(data['Language'], prefix='Language')
-data = pd.concat([data, language_dummies], axis=1)
-data.drop(columns=['Language'], inplace=True)
+    # 4. Кодирование жанров (One-Hot Encoding)
+    if 'Genres' in df.columns:
+        genres_expanded = df['Genres'].str.get_dummies(sep=', ')
+        df = pd.concat([df.drop(columns=['Genres']), genres_expanded], axis=1)
+        print("Жанры закодированы.")
 
-# Step 4: Remove Duplicates
-# Remove duplicate rows based on 'Movie Name' or 'Original Title'
-data.drop_duplicates(subset=['Movie Name', 'Original Title'], inplace=True)
+    # 5. Возвращаем чистый DataFrame
+    print("Предобработка завершена.")
+    return df
 
-# Step 5: Drop Unnecessary Columns
-# Drop 'Poster path' if not required for analysis or recommendations
-data.drop(columns=['Poster path'], inplace=True)
 
-# Save the cleaned dataset
-output_path = 'cleaned_tmdb_movies.csv'
-data.to_csv(output_path, index=False)
+# Применение функции
+cleaned_movies_df = preprocess_data(movies_df)
+
+# Сохранение результатов в новый CSV
+cleaned_movies_df.to_csv('cleaned_tmdb_movies.csv', index=False)
+print("Чистый датасет сохранен в 'cleaned_tmdb_movies.csv'.")
