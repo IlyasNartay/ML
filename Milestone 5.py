@@ -44,7 +44,10 @@ def get_recommendations(request: RecommendRequest):
     )
     return {
         "message": "Success",
-        "recommendations": recommendations.to_dict(orient="records")
+        "recommendations": [
+            {k.lower().replace(" ", "_"): v for k, v in record.items()}
+            for record in recommendations.to_dict(orient="records")
+        ]
     }
 
 # Эндпоинт для обновления фидбэка
@@ -56,4 +59,4 @@ def update_user_feedback(feedback: FeedbackRequest):
 # Запуск приложения
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="localhost", port=2332)

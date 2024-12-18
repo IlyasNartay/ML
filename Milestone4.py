@@ -44,7 +44,7 @@ class RecommendationModel:
 
         # Сортировка по убыванию схожести
         top_indices = filtered_indices[filtered_similarities.argsort()[-n:][::-1]]
-        recommended_movies = filtered_movies.loc[top_indices, ['Movie Name', 'Overview', 'Vote Average']]
+        recommended_movies = filtered_movies.loc[top_indices]
         recommended_movies['Similarity'] = filtered_similarities[top_indices - filtered_indices[0]]
         return recommended_movies
 
